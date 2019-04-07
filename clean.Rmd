@@ -205,6 +205,12 @@ MyData %<>%
 
 sapply(MyData, function(y) sum(length(which(is.na(y)))))
 
+MyData$max_games = 0
+
+for (i in 1:length(MyData$num_games)) {
+  MyData$max_games[i] = max(MyData$num_games[i], MyData$daily_games_recorded[i])
+}
+
 MyData_cleaned = MyData %>%
   filter(!is.na(dummy_menstruation) & !is.na(daily_AcuteChronicRatio))
 
@@ -217,9 +223,13 @@ MyData_cleaned %<>%
          sleep_hours_norm, training_readiness_norm, daily_training, daily_games_recorded,
          daily_rpe_observations, num_games, daily_duration_norm, daily_rpe_norm,
          daily_session_load_norm, daily_load_norm, daily_acute_load_norm, daily_chronic_load_norm,
-         daily_acute_chronic_ratio_norm)
+         daily_acute_chronic_ratio_norm, max_games)
 
 sapply(MyData_cleaned, function(y) sum(length(which(is.na(y)))))
+
+# write data
+write.csv(MyData, file="data.csv")
+write.csv(MyData_cleaned, file="data_cleaned.csv")
 
 ```
 

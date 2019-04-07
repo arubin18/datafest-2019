@@ -5,6 +5,9 @@ output: html_document
 
 ```{r setup, include=FALSE}
 library(caret)
+library(ROCR)
+library(pROC)
+library(PRROC)
 ```
 
 
@@ -15,6 +18,11 @@ nrow(MyData_cleaned)
 # 90% of the sample size 
 sample_size = floor(0.90*nrow(MyData_cleaned))
 
+# convert data types
+MyData$injury_risk = as.factor(MyData$injury_risk)
+MyData$dummy_pain = as.factor(MyData$dummy_pain)
+MyData$cat_illness = as.factor(MyData$cat_illness)
+
 # set the seed to make partition reproducible
 set.seed(123)
 training_indices = sample(seq_len(nrow(MyData_cleaned)), size = sample_size)
@@ -22,7 +30,7 @@ training_indices = sample(seq_len(nrow(MyData_cleaned)), size = sample_size)
 training_data = MyData_cleaned[training_indices,]
 testing_data = MyData_cleaned[-training_indices,]
 
-formula = injury_risk ~ dummy_pain
+formula = injury_risk ~ dummy_pain + cat_illness + max_games + daily_duration_norm
 
 # k-fold cross validation 
 control <- trainControl(method = "repeatedcv", number = 10)
@@ -31,6 +39,43 @@ control <- trainControl(method = "repeatedcv", number = 10)
 model <- train(formula, data=training_data, trControl=control, method="glm")
 
 summary(model$finalModel)
+
+## predictive probabilities of training data
+predicted_probs = predict(model, training_data, type="prob")[,2] # probabilities for not injured
+fg = predicted_probs[which(training_data$injury_risk == 1)]
+bg = predicted_probs[which(training_data$injury_risk == 0)]
+
+# roc curve
+roc <- roc.curve(scores.class0 = fg, scores.class1 = bg, curve = T)
+plot(roc)
+
+# want to minimize number of false positives thus need a higher precision 
+pr <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = T)
+plot(pr)
+
+pr_curve = as.data.frame(pr$curve)
+names(pr_curve) = c("recall", "precision", "threshold")
+
+plot(x=pr_curve$threshold, y=pr_curve$recall, col="green", type="l", xlab="Threshold", ylab="")
+lines(x=pr_curve$threshold, y=pr_curve$precision, col="blue")
+legend("bottomleft",legend=c("Recall", "Precision"),
+       col=c("green", "blue"), lty=1:2, cex=0.8)
+
+predicted_labels = ifelse(predicted_probs>0.2,1,0)
+cm = confusionMatrix(data = predicted_labels, reference = training_data$injury_risk, positive = "1")
+
+balanced_accuracy = function(threshold) {
+  predicted_labels = ifelse(predicted_probs>threshold,1,0) 
+  cm = confusionMatrix(data = predicted_labels, reference = training_data$injury_risk, positive = "1")
+  return (cm$byClass["F1"])
+}
+
+interval = seq(from = 0, to = 1, by = 0.01)
+optimize_obj = optimize(balanced_accuracy, interval=c(0,1), tol = 0.001, maximum=T)
+bound = optimize_obj$maximum # we want a threshold below this bound 
+
+test = pr_curve[pr_curve$threshold < bound & pr_curve$threshold > 0.1,]
+threshold = 0.14
 
 
 ```
