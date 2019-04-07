@@ -1,0 +1,27 @@
+---
+title: "load data"
+output: html_document
+---
+
+## load libaries
+
+```{r setup, include=FALSE}
+library(feather)
+```
+
+## load data from csv
+
+```{r setup, include=FALSE}
+
+games = read.csv(file="datasets/games.csv", header=T, sep=",", na.strings=c("", NA))
+gps = read.csv(file="datasets/gps.csv", header=T, sep=",", na.strings=c("", NA))
+rpe = read.csv(file="datasets/rpe.csv", header=T, sep=",", na.strings=c("", NA))
+wellness = read.csv(file="datasets/wellness.csv", header=T, sep=",", na.strings=c("", NA))
+
+write_feather(games, "games.feather")
+write_feather(gps, "gps.feather")
+write_feather(rpe, "rpe.feather")
+write_feather(wellness, "wellness.feather")
+
+```
+

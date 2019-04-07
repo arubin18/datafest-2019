@@ -1,0 +1,36 @@
+---
+title: "ml"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(caret)
+```
+
+
+```{r setup, include=FALSE}
+
+nrow(MyData_cleaned)
+
+# 90% of the sample size 
+sample_size = floor(0.90*nrow(MyData_cleaned))
+
+# set the seed to make partition reproducible
+set.seed(123)
+training_indices = sample(seq_len(nrow(MyData_cleaned)), size = sample_size)
+
+training_data = MyData_cleaned[training_indices,]
+testing_data = MyData_cleaned[-training_indices,]
+
+formula = injury_risk ~ dummy_pain
+
+# k-fold cross validation 
+control <- trainControl(method = "repeatedcv", number = 10)
+
+# logistic regression with cv on training data
+model <- train(formula, data=training_data, trControl=control, method="glm")
+
+summary(model$finalModel)
+
+
+```

@@ -1,0 +1,226 @@
+---
+title: "clean"
+output: html_document
+---
+
+## load libraries
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(magrittr)
+library(stringr)
+library(tidyverse)
+```
+
+## user defined functions
+
+```{r setup, include=FALSE}
+
+# yes for pain 1
+# illness and no pain 1
+# no illness and no pain 0
+# slighly off and no pain 0
+
+get_injury_risk = function(pain, illness) {
+  
+  injury_risk = replicate(length(pain), 0)
+  
+  for (i in 1:length(pain)-1) {
+    tmrw_pain = pain[i+1]
+    tmrw_illness = illness[i+1]
+    
+    if (tmrw_pain == "Yes") {
+      injury_risk[i] = 1
+    }
+    
+    # no pain
+    if (tmrw_illness == "Yes") {
+      injury_risk[i] = 1
+    }
+  }
+  
+  injury_risk[length(pain)] = -1
+  
+  return (injury_risk)
+  
+}
+
+normalize = function(values) {
+  return ((values - mean(values, na.rm=T)) / sd(values, na.rm = T))
+}
+
+```
+
+## load data from feather files
+
+```{r setup, include=FALSE}
+
+wellness = read_feather("wellness.feather")
+
+```
+
+## cleaning data
+
+```{r setup, include=FALSE}
+
+# check for missing values 
+sum(is.na(wellness$Pain))
+sum(is.na(wellness$Illness))
+
+# convert date column 
+wellness$Date = as.Date(wellness$Date)
+rpe$Date = as.Date(rpe$Date)
+games$Date = as.Date(games$Date)
+
+# number of days recorded in dataset 
+length(unique(wellness$Date))
+
+## get labels 
+wellness %<>%
+  group_by(PlayerID) %>%
+  arrange(Date) %>%
+  mutate(injury_risk = get_injury_risk(pain = Pain, illness = Illness)) %>%
+  filter(injury_risk != "-1")
+
+## create dummy columns 
+wellness %<>%
+  mutate(dummy_pain = ifelse(Pain == "Yes", 1, 0)) %>%
+  mutate(dummy_menstruation = ifelse(Menstruation == "Yes", 1, 0))
+
+wellness$cat_illness = wellness$Illness
+levels(wellness$cat_illness) = c(0, 0.5, 1)
+
+# observations missing for nutrition
+sum(is.na(wellness$Nutrition))
+
+wellness$cat_nutrition = wellness$Nutrition
+levels(wellness$cat_nutrition) = c(1, 0.5, 0)
+
+# number of observations that have USG
+sum(!is.na(wellness$USG)) / nrow(wellness)
+
+# convert column from character to decimal and remove percentile
+wellness$TrainingReadiness = as.numeric(str_remove(wellness$TrainingReadiness, pattern = "%")) / 100
+
+## standardize self-rated scores 
+wellness %<>%
+  group_by(PlayerID) %>%
+  mutate(fatigue_norm = normalize(Fatigue)) %>%
+  mutate(soreness_norm = normalize(Soreness)) %>%
+  mutate(desire_norm = normalize(Desire)) %>%
+  mutate(irritability_norm = normalize(Irritability)) %>%
+  mutate(sleep_quality_norm = normalize(SleepQuality)) %>%
+  mutate(sleep_hours_norm = normalize(SleepHours)) %>%
+  mutate(training_readiness_norm = normalize(TrainingReadiness)) %>%
+  select(-MonitoringScore)
+
+# seperate date column
+
+wellness %<>% separate(Date, c("year", "month", "day"), sep = "-", remove=F)
+
+wellness$USG = as.numeric(as.character(wellness$USG))
+
+mean_usgs = wellness %>%
+  group_by(PlayerID, month) %>%
+  summarise(mean_usg = mean(USG, na.rm=T))
+
+test_player = wellness %>% filter(PlayerID == 2)
+
+## calculate rpe daily totals
+rpe_daily_totals = rpe %>%
+  mutate(daily_training = ifelse(Training == "Yes", 1, 0)) %>%
+  mutate(daily_games_recorded = ifelse(SessionType == "Game", 1, 0)) %>%
+  mutate(daily_rpe_observations = 1) %>%
+  mutate(num_na_cr = ifelse(is.na(AcuteChronicRatio), 0, 1)) %>%
+  group_by(Date, PlayerID) %>%
+  select_if(is.numeric) %>%
+  summarise_all(funs(sum), na.rm=T) %>%
+  select(-c(ObjectiveRating, FocusRating)) %>%
+  rename_at(vars(-c(Date, PlayerID, daily_training, daily_games_recorded, daily_rpe_observations)), function(x) paste0("daily_", x))
+
+rpe_daily_totals$daily_AcuteChronicRatio = rpe_daily_totals$daily_AcuteChronicRatio / rpe_daily_totals$daily_num_na_cr
+
+## merge rpe and wellness data
+MyData = merge(wellness, rpe_daily_totals, by=c("Date", "PlayerID"))
+
+# observations that rep datasets says there is a game and games dataset has no game on that date
+which(!is.na(MyData$game1) & MyData$daily_games_recorded > 0)
+
+sum(rpe$SessionType == "Game", na.rm=T)
+
+## merge gps dataset with MyData
+
+game_dates = games %>%
+  select(GameID, Date)
+
+player_games = gps %>%
+  group_by(GameID, PlayerID) %>%
+  summarise()
+
+player_dates = merge(player_games, game_dates, by = "GameID")
+
+player_dates %<>%
+  group_by(Date, PlayerID) %>%
+  summarise(num_games = n(), game_ids = toString(GameID)) %>%
+  separate(game_ids, into=c("game1", "game2", "game3"), remove=F)
+
+MyData = merge(MyData, player_dates, by = c("Date", "PlayerID"), all=T)
+
+# replace nas with 0
+MyData$num_games[is.na(MyData$num_games)] = 0
+
+## merge games and wellness data
+
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# results summarised for each day
+game_results_by_day = games %>%
+  mutate(dummy_win = ifelse(Outcome == "W", 1, 0)) %>%
+  group_by(Date) %>%
+  summarise(game_ids = toString(GameID), tournament = Mode(Tournament),
+            total_team_points = sum(TeamPoints), total_team_points_allowed = sum(TeamPointsAllowed),
+            total_wins = sum(dummy_win))
+
+MyData = merge(MyData, game_results_by_day, by=c("Date", "game_ids"), all = T)
+
+MyData %<>%
+  filter(!is.na(year))
+
+nrow(MyData[which(MyData$daily_games_recorded > MyData$num_games),])
+nrow(MyData[which(MyData$num_games != 0),])
+
+## standardize daily sums
+MyData %<>%
+  group_by(PlayerID) %>%
+  mutate(daily_duration_norm = normalize(daily_Duration)) %>%
+  mutate(daily_rpe_norm = normalize(daily_RPE)) %>%
+  mutate(daily_session_load_norm = normalize(daily_SessionLoad)) %>%
+  mutate(daily_load_norm = normalize(daily_DailyLoad)) %>%
+  mutate(daily_acute_load_norm = normalize(daily_AcuteLoad)) %>%
+  mutate(daily_chronic_load_norm = normalize(daily_ChronicLoad)) %>%
+  mutate(daily_acute_chronic_ratio_norm = normalize(daily_AcuteChronicRatio))
+
+sapply(MyData, function(y) sum(length(which(is.na(y)))))
+
+MyData_cleaned = MyData %>%
+  filter(!is.na(dummy_menstruation) & !is.na(daily_AcuteChronicRatio))
+
+# games missing, usg measurement missing, nutrition missing
+sapply(MyData_cleaned, function(y) sum(length(which(is.na(y)))))
+
+MyData_cleaned %<>%
+  select(Date, PlayerID, injury_risk, dummy_pain, dummy_menstruation, cat_illness,
+         fatigue_norm, soreness_norm, desire_norm, irritability_norm, sleep_quality_norm, 
+         sleep_hours_norm, training_readiness_norm, daily_training, daily_games_recorded,
+         daily_rpe_observations, num_games, daily_duration_norm, daily_rpe_norm,
+         daily_session_load_norm, daily_load_norm, daily_acute_load_norm, daily_chronic_load_norm,
+         daily_acute_chronic_ratio_norm)
+
+sapply(MyData_cleaned, function(y) sum(length(which(is.na(y)))))
+
+```
+
+
